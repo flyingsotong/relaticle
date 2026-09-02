@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Resources\TaskResource\Pages;
 
 use App\Actions\Task\NotifyTaskAssignees;
+use App\Filament\Concerns\PersistsTablePerPage;
 use App\Filament\Concerns\HasBoardViewSwitcher;
 use App\Filament\Exports\TaskExporter;
 use App\Filament\Resources\TaskResource;
@@ -26,6 +27,7 @@ final class ManageTasks extends ManageRecords
     use HasBoardViewSwitcher;
     use HasResizableColumn;
     use InteractsWithCustomFields;
+    use PersistsTablePerPage;
 
     protected static string $resource = TaskResource::class;
 
