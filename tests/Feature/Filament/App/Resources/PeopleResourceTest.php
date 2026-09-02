@@ -89,13 +89,50 @@ it('cannot display trashed records by default', function (): void {
         ->assertCountTableRecords(4);
 });
 
+it('defaults to 25 records per page', function (): void {
+    $records = People::factory(30)->recycle([$this->user, $this->team])->create();
+
+    $table = livewire(ListPeople::class);
+
+    expect($table->get('tableRecordsPerPage'))->toBe(25)
+        ->and($records->count())->toBe(30);
+
+    $table->assertCanSeeTableRecords($records->take(25), inOrder: true)
+        ->assertCanNotSeeTableRecords($records->skip(25));
+});
+
 it('can paginate records', function (): void {
     $records = People::factory(20)->recycle([$this->user, $this->team])->create();
 
     livewire(ListPeople::class)
+        ->set('tableRecordsPerPage', 10)
         ->assertCanSeeTableRecords($records->take(10), inOrder: true)
         ->call('gotoPage', 2)
         ->assertCanSeeTableRecords($records->skip(10)->take(10), inOrder: true);
+});
+
+it('persists the chosen records-per-page per user', function (): void {
+    $records = People::factory(30)->recycle([$this->user, $this->team])->create();
+
+    livewire(ListPeople::class)
+        ->set('tableRecordsPerPage', 50);
+
+    $preferences = $this->user->fresh()->table_pagination_preferences;
+
+    expect($preferences)->toBeArray()
+        ->and(array_values($preferences))->toContain(50);
+});
+
+it('restores the persisted records-per-page on remount', function (): void {
+    $records = People::factory(30)->recycle([$this->user, $this->team])->create();
+
+    livewire(ListPeople::class)
+        ->set('tableRecordsPerPage', 50);
+
+    $table = livewire(ListPeople::class);
+
+    expect($table->get('tableRecordsPerPage'))->toBe(50)
+        ->and($table->assertCanSeeTableRecords($records->take(50)));
 });
 
 it('can bulk delete records', function (): void {

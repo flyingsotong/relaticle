@@ -94,6 +94,8 @@ final class AppPanelProvider extends PanelProvider
      */
     private const string DATE_TIME_FORMAT = 'M j, Y H:i';
 
+    private const int DEFAULT_PAGINATION_PAGE_OPTION = 25;
+
     /**
      * Perform post-registration booting of components.
      */
@@ -120,7 +122,9 @@ final class AppPanelProvider extends PanelProvider
         // Table and Schema configuration is global, so both callbacks have to check
         // which panel is actually serving the request before they touch the format.
         Table::configureUsing(fn (Table $table): Table => $this->isCurrentPanel()
-            ? $table->defaultDateTimeDisplayFormat(self::DATE_TIME_FORMAT)
+            ? $table
+                ->defaultDateTimeDisplayFormat(self::DATE_TIME_FORMAT)
+                ->defaultPaginationPageOption(self::DEFAULT_PAGINATION_PAGE_OPTION)
             : $table);
 
         Schema::configureUsing(fn (Schema $schema): Schema => $this->isCurrentPanel()
