@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Database\Factories;
 
-use App\Models\Team;
 use App\Models\User;
+use App\Models\Workspace;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Relaticle\ImportWizard\Enums\ImportEntityType;
 use Relaticle\ImportWizard\Enums\ImportStatus;
@@ -27,11 +27,11 @@ final class ImportFactory extends Factory
     {
         return [
             'user_id' => User::factory(),
-            'team_id' => static fn (array $attributes): string => (string) Team::factory()->create([
+            'workspace_id' => static fn (array $attributes): string => (string) Workspace::factory()->create([
                 'user_id' => $attributes['user_id'],
             ])->getKey(),
             'entity_type' => ImportEntityType::People,
-            'file_name' => $this->faker->unique()->lexify('import-????????.csv'),
+            'file_name' => fake()->unique()->lexify('import-????????.csv'),
             'status' => ImportStatus::Uploading,
             'total_rows' => 0,
             'headers' => [],

@@ -1,5 +1,3 @@
-# Privacy Policy
-
 **Effective date:** August 26, 2026
 
 This Privacy Policy explains how Relaticle ("we", "us", "our") collects, uses, and protects your personal data when you use our services.
@@ -11,7 +9,7 @@ This Privacy Policy explains how Relaticle ("we", "us", "our") collects, uses, a
 ### Cloud Users (app.relaticle.com)
 
 - **Account information:** Name, email address, and password (hashed)
-- **Profile data:** Avatar, team name, and role
+- **Profile data:** Avatar, workspace name, and role
 - **CRM data:** Companies, people, opportunities, tasks, notes, and custom fields you create
 - **Usage data:** Login timestamps, feature usage, and error reports
 - **Technical data:** IP address, browser type, and device information
@@ -30,8 +28,8 @@ Data from a self-hosted installation stays on your servers unless you configure 
 We use your data to:
 
 - Provide and maintain the CRM service
-- Authenticate your account and enforce team-level access controls
-- Send transactional emails (password resets, team invitations)
+- Authenticate your account and enforce workspace-level access controls
+- Send transactional emails (password resets, workspace invitations)
 - Improve the service based on aggregated, anonymized usage patterns
 - Respond to support inquiries
 
@@ -58,14 +56,14 @@ We protect your data with:
 
 - Encrypted connections (TLS/HTTPS) for all data in transit
 - Encrypted database storage for sensitive fields
-- Team-based access isolation (multi-tenancy)
+- Workspace-based access isolation (multi-tenancy)
 - API token authentication with scoped permissions
 - Regular security updates and dependency audits
 
 ## 5. Data Retention
 
 - **Active accounts:** Data is retained as long as your account is active
-- **Deleted accounts:** Data is deleted within 30 days of account deletion
+- **Scheduled account deletions:** Accounts and their personal data are removed after a 30-day grace period. Records in shared workspaces remain.
 - **Contact form submissions:** Retained for up to 12 months
 - **Server logs:** Retained for up to 90 days
 
@@ -76,10 +74,12 @@ You have the right to:
 - **Access** your personal data at any time through the application
 - **Export** your data via the application or REST API
 - **Correct** inaccurate personal data through your profile settings
-- **Delete** your account and associated data
+- **Request deletion** of your account and personal data
 - **Object** to data processing for specific purposes
 
 To exercise these rights, email privacy@relaticle.com or use [Contact Us](/contact). We will respond within 15 business days.
+
+To request account deletion, email privacy@relaticle.com or contact us. If **Delete Account** is available in your profile settings, you can schedule deletion there.
 
 ## 7. Cookies
 
@@ -104,8 +104,8 @@ Relaticle enforces workspace and token scope on every tool request.
 **Data tool responses can include:**
 
 - User names, email addresses, and identifiers.
-- Team names and identifiers.
-- Team-member names, emails, and identifiers.
+- Workspace names and identifiers.
+- Workspace-member names, emails, and identifiers.
 - Token ability names.
 - Companies, people, opportunities, tasks, and notes.
 - Record identifiers and canonical record URLs.

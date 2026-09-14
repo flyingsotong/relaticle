@@ -8,11 +8,16 @@ use App\Casts\AsCanonicalEmail;
 use App\Data\NotificationPreferences;
 use App\Enums\Notifications\NotificationChannel;
 use App\Enums\Notifications\NotificationType;
-use App\Enums\TeamRole;
+use App\Enums\WorkspaceRole;
 use App\Models\Concerns\HasProfilePhoto;
+use App\Models\Concerns\HasWorkspaces;
+use App\Notifications\Auth\ResetPassword;
+use App\Notifications\Auth\VerifyEmail;
 use App\Observers\UserObserver;
+use Carbon\CarbonImmutable;
 use Database\Factories\UserFactory;
 use Exception;
+use Filament\Facades\Filament;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Models\Contracts\HasAvatar;
 use Filament\Models\Contracts\HasDefaultTenant;
@@ -33,12 +38,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Laravel\Fortify\Contracts\PasskeyUser;
 use Laravel\Fortify\PasskeyAuthenticatable;
 use Laravel\Fortify\TwoFactorAuthenticatable;
-use Laravel\Jetstream\HasTeams;
 use Laravel\Jetstream\Jetstream;
 use Laravel\Passport\Client;
 use Laravel\Passport\Passport;
@@ -51,18 +54,22 @@ use Laravel\Sanctum\HasApiTokens;
  * @property string|null $password
  * @property string|null $profile_photo_path
  * @property-read string $profile_photo_url
- * @property Carbon|null $email_verified_at
- * @property Carbon|null $last_login_at
+ * @property CarbonImmutable|null $email_verified_at
+ * @property CarbonImmutable|null $email_sign_in_enabled_at
+ * @property CarbonImmutable|null $last_login_at
  * @property string|null $mailcoach_subscriber_uuid
  * @property string|null $subscriber_profile_hash
+ * @property string|null $rejected_subscriber_profile_hash
  * @property string|null $remember_token
- * @property Carbon|null $scheduled_deletion_at
+ * @property CarbonImmutable|null $scheduled_deletion_at
  * @property string|null $two_factor_recovery_codes
  * @property string|null $two_factor_secret
  * @property array<string, mixed>|null $ai_preferences
  * @property array<string, mixed>|null $notification_preferences
  * @property array<string, mixed>|null $table_column_preferences
- * @property-read Team|null $currentTeam
+ * @property-read Workspace|null $currentWorkspace
+ * @property-read Membership|null $membership the `workspace_user` row, populated only when the user was
+ *     loaded through `Workspace::users()`; null on a user reached any other way
  */
 #[Appends([
     'profile_photo_url',
@@ -83,6 +90,7 @@ use Laravel\Sanctum\HasApiTokens;
     'two_factor_secret',
     'mailcoach_subscriber_uuid',
     'subscriber_profile_hash',
+    'rejected_subscriber_profile_hash',
 ])]
 #[ObservedBy(UserObserver::class)]
 final class User extends Authenticatable implements FilamentUser, HasAvatar, HasDefaultTenant, HasTenants, MustVerifyEmail, PasskeyUser
@@ -93,8 +101,8 @@ final class User extends Authenticatable implements FilamentUser, HasAvatar, Has
     use HasFactory;
 
     use HasProfilePhoto;
-    use HasTeams;
     use HasUlids;
+    use HasWorkspaces;
     use Notifiable;
     use PasskeyAuthenticatable;
     use TwoFactorAuthenticatable;
@@ -109,6 +117,7 @@ final class User extends Authenticatable implements FilamentUser, HasAvatar, Has
         return [
             'email' => AsCanonicalEmail::class,
             'email_verified_at' => 'datetime',
+            'email_sign_in_enabled_at' => 'datetime',
             'last_login_at' => 'datetime',
             'password' => 'hashed',
             'ai_preferences' => 'array',
@@ -126,6 +135,22 @@ final class User extends Authenticatable implements FilamentUser, HasAvatar, Has
     public function wantsNotification(NotificationType $type, NotificationChannel $channel): bool
     {
         return $this->notificationPreferences()->wants($type, $channel);
+    }
+
+    public function sendEmailVerificationNotification(): void
+    {
+        $notification = resolve(VerifyEmail::class);
+        $notification->url = Filament::getVerifyEmailUrl($this);
+
+        $this->notify($notification);
+    }
+
+    public function sendPasswordResetNotification($token): void
+    {
+        $notification = resolve(ResetPassword::class, ['token' => $token]);
+        $notification->url = Filament::getResetPasswordUrl($token, $this);
+
+        $this->notify($notification);
     }
 
     /**
@@ -201,7 +226,7 @@ final class User extends Authenticatable implements FilamentUser, HasAvatar, Has
 
     public function getDefaultTenant(Panel $panel): ?Model
     {
-        return $this->currentTeam;
+        return $this->currentWorkspace;
     }
 
     /**
@@ -227,16 +252,16 @@ final class User extends Authenticatable implements FilamentUser, HasAvatar, Has
     }
 
     /**
-     * @return Collection<int, Team>
+     * @return Collection<int, Workspace>
      */
     public function getTenants(Panel $panel): Collection
     {
-        return $this->allTeams();
+        return $this->allWorkspaces();
     }
 
     public function canAccessTenant(Model $tenant): bool
     {
-        return $this->belongsToTeam($tenant);
+        return $this->belongsToWorkspace($tenant);
     }
 
     /**
@@ -253,80 +278,55 @@ final class User extends Authenticatable implements FilamentUser, HasAvatar, Has
     }
 
     /**
-     * Typed override of the Jetstream relation, which resolves its model from
-     * runtime config and so returns an untyped collection.
+     * The ids of every workspace the user can reach, owned or joined.
      *
-     * @return HasMany<Team, $this>
-     */
-    public function ownedTeams(): HasMany
-    {
-        return $this->hasMany(Team::class);
-    }
-
-    /**
-     * Typed override of the Jetstream relation, which resolves its model from
-     * runtime config and so returns an untyped collection.
-     *
-     * @return BelongsToMany<Team, $this, Membership, 'membership'>
-     */
-    public function teams(): BelongsToMany
-    {
-        return $this->belongsToMany(Team::class, Membership::class)
-            ->withPivot('role')
-            ->withTimestamps()
-            ->as('membership');
-    }
-
-    /**
-     * The ids of every team the user can reach, owned or joined.
-     *
-     * Authorization runs once per table row, so resolving a record's `team`
+     * Authorization runs once per table row, so resolving a record's `workspace`
      * relation inside a policy costs a query per row, and throws once a query
      * hydrates more than one row, because that is when Eloquent arms its strict
      * lazy-loading guard. Matching the record's foreign key against this set
      * keeps authorization off the record's relations entirely.
      *
-     * Both relations are the ones Jetstream already defines and that
-     * `allTeams()` loads for the panel's tenant switcher, so inside a panel
+     * Both relations are the ones HasWorkspaces defines and that
+     * `allWorkspaces()` loads for the panel's tenant switcher, so inside a panel
      * request this set costs nothing beyond what is already in memory.
      *
      * @return list<string>
      */
-    public function accessibleTeamIds(): array
+    public function accessibleWorkspaceIds(): array
     {
-        $this->loadMissing(['ownedTeams', 'teams']);
+        $this->loadMissing(['ownedWorkspaces', 'workspaces']);
 
         return array_map(
             strval(...),
-            [...$this->ownedTeams->modelKeys(), ...$this->teams->modelKeys()],
+            [...$this->ownedWorkspaces->modelKeys(), ...$this->workspaces->modelKeys()],
         );
     }
 
-    public function belongsToTeamId(?string $teamId): bool
+    public function belongsToWorkspaceId(?string $workspaceId): bool
     {
-        return $teamId !== null && in_array($teamId, $this->accessibleTeamIds(), true);
+        return $workspaceId !== null && in_array($workspaceId, $this->accessibleWorkspaceIds(), true);
     }
 
     /**
-     * Determine whether the user holds the given role on the team owning the
+     * Determine whether the user holds the given role on the workspace owning the
      * given foreign key.
      */
-    public function hasTeamRoleForTeamId(?string $teamId, string $role): bool
+    public function hasWorkspaceRoleForWorkspaceId(?string $workspaceId, string $role): bool
     {
-        if ($teamId === null) {
+        if ($workspaceId === null) {
             return false;
         }
 
-        $this->loadMissing('ownedTeams');
+        $this->loadMissing('ownedWorkspaces');
 
-        if (in_array($teamId, array_map(strval(...), $this->ownedTeams->modelKeys()), true)) {
+        if (in_array($workspaceId, array_map(strval(...), $this->ownedWorkspaces->modelKeys()), true)) {
             return true;
         }
 
-        $this->loadMissing('teams');
+        $this->loadMissing('workspaces');
 
-        $membershipRole = $this->teams
-            ->first(fn (Team $team): bool => $team->getKey() === $teamId)
+        $membershipRole = $this->workspaces
+            ->first(fn (Workspace $workspace): bool => $workspace->getKey() === $workspaceId)
             ?->membership
             ?->role;
 
@@ -339,18 +339,18 @@ final class User extends Authenticatable implements FilamentUser, HasAvatar, Has
 
     // Ownership outranks the pivot role, so an owner row carrying a stale
     // viewer value cannot lock them out of their own workspace.
-    public function isViewerOnTeamId(?string $teamId): bool
+    public function isViewerOnWorkspaceId(?string $workspaceId): bool
     {
-        if ($teamId === null) {
+        if ($workspaceId === null) {
             return false;
         }
 
-        $this->loadMissing('ownedTeams');
+        $this->loadMissing('ownedWorkspaces');
 
-        if (in_array($teamId, array_map(strval(...), $this->ownedTeams->modelKeys()), true)) {
+        if (in_array($workspaceId, array_map(strval(...), $this->ownedWorkspaces->modelKeys()), true)) {
             return false;
         }
 
-        return $this->hasTeamRoleForTeamId($teamId, TeamRole::Viewer->value);
+        return $this->hasWorkspaceRoleForWorkspaceId($workspaceId, WorkspaceRole::Viewer->value);
     }
 }

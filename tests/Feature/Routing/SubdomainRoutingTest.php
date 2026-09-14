@@ -10,7 +10,7 @@ use Laravel\Mcp\Facades\Mcp;
 use Laravel\Sanctum\Sanctum;
 
 beforeEach(function () {
-    $this->user = User::factory()->withPersonalTeam()->create();
+    $this->user = User::factory()->withPersonalWorkspace()->create();
 });
 
 describe('API routing - default path mode', function () {
@@ -42,6 +42,18 @@ describe('API routing - subdomain mode', function () {
         expect($json)->toHaveKeys(['name', 'version', 'docs']);
         expect($json['name'])->toBe('Relaticle API');
         expect($json['version'])->toBe('v1');
+    });
+
+    it('names the API the same way in the root banner and the generated spec', function (): void {
+        config(['app.api_domain' => 'api.example.com']);
+
+        Route::domain('api.example.com')
+            ->middleware('api')
+            ->group(base_path('routes/api.php'));
+
+        $bannerName = $this->get('http://api.example.com/')->assertOk()->json('name');
+
+        expect(config('scribe.title'))->toBe($bannerName);
     });
 
     it('serves API resources on subdomain at /v1 prefix', function (): void {

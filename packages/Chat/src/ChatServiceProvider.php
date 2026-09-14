@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Relaticle\Chat;
 
+use App\Enums\CrmEntity;
 use App\Models\Company;
 use App\Models\Note;
 use App\Models\Opportunity;
@@ -18,6 +19,7 @@ use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Js;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Ai\Contracts\ConversationStore;
 use Laravel\Ai\Events\AgentFailed;
@@ -119,7 +121,7 @@ final class ChatServiceProvider extends ServiceProvider
      *   which runs before every app provider's boot(), so a chat route added
      *   during boot is always the later of the two.
      *
-     * Both "r" and "chat" are reserved team slugs, so no legitimate tenant URL
+     * Both "r" and "chat" are reserved workspace slugs, so no legitimate tenant URL
      * can live under either prefix and winning the match here is correct.
      * tests/Feature/Routing/AppPanelRoutingTest.php pins both routing modes.
      */
@@ -164,9 +166,9 @@ final class ChatServiceProvider extends ServiceProvider
     private function registerInsightsCacheInvalidation(): void
     {
         $invalidate = function (Model $model): void {
-            $teamId = $model->getAttribute('team_id');
-            if (is_string($teamId) || is_int($teamId)) {
-                Cache::forget("crm_insights_{$teamId}");
+            $workspaceId = $model->getAttribute('workspace_id');
+            if (is_string($workspaceId) || is_int($workspaceId)) {
+                Cache::forget("crm_insights_{$workspaceId}");
             }
         };
 
@@ -176,11 +178,32 @@ final class ChatServiceProvider extends ServiceProvider
         }
     }
 
+    /**
+     * Hands the client half of the chip renderer the same icon set the server
+     * half uses. Without this the path data would live twice, once in PHP and
+     * once in chat.js, and a new record type could chip on reload while a
+     * streamed reply showed a plain link.
+     */
+    private function recordChipIconScript(): string
+    {
+        $icons = [];
+
+        foreach (CrmEntity::cases() as $case) {
+            $icons[$case->value] = $case->iconPath();
+        }
+
+        return sprintf(
+            '<script>window.RECORD_CHIP_ICONS = %s;</script>',
+            Js::from($icons)->toHtml(),
+        );
+    }
+
     private function registerRenderHooks(): void
     {
         FilamentView::registerRenderHook(
             PanelsRenderHook::HEAD_END,
-            fn (): string => Blade::render("@vite(['resources/js/echo.js', 'packages/Chat/resources/js/chat.js'])"),
+            fn (): string => $this->recordChipIconScript()
+                .Blade::render("@vite(['resources/js/echo.js', 'packages/Chat/resources/js/chat.js'])"),
         );
 
         FilamentView::registerRenderHook(
