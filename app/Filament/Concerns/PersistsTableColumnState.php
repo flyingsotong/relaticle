@@ -6,7 +6,6 @@ namespace App\Filament\Concerns;
 
 use App\Actions\Users\UpdateTableColumnPreferences;
 use App\Models\User;
-use Filament\Tables\Concerns\InteractsWithTable;
 
 /**
  * Persist the Filament column manager state (visibility toggles + column order)
