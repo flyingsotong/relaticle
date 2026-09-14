@@ -85,7 +85,7 @@ parameters:
         # PHPStan fails on unmatched ignores, so stale entries can't linger.
         -
             identifier: app.architecture.eloquentWriteOutsideAction
-            path: app/Filament/Pages/CreateTeam.php
+            path: app/Filament/Pages/CreateWorkspace.php
         -
             identifier: app.architecture.eloquentWriteOutsideAction
             path: app/Filament/Resources/OpportunityResource/Pages/OpportunitiesBoard.php
@@ -104,9 +104,6 @@ parameters:
         -
             identifier: app.architecture.eloquentWriteOutsideAction
             path: app/Livewire/App/AccessTokens/ManageAccessTokens.php
-        -
-            identifier: app.architecture.eloquentWriteOutsideAction
-            path: app/Livewire/App/Profile/UpdatePassword.php
     stubFiles:
         - stubs/Mailcoach.stub
 

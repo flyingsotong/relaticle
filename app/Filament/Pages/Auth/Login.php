@@ -4,13 +4,17 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages\Auth;
 
+use App\Actions\Auth\AuthenticatePassword;
 use App\Actions\Fortify\CreateNewUser;
-use App\Concerns\DetectsTeamInvitation;
+use App\Concerns\DetectsWorkspaceInvitation;
 use App\Enums\SocialiteProvider;
 use App\Features\SocialAuth;
 use App\Models\User;
+use App\Models\WorkspaceInvitation;
 use App\Rules\RegistrableEmail;
+use App\Rules\TurnstileChallenge;
 use App\Support\EmailAddress;
+use DanHarrin\LivewireRateLimiting\Exceptions\TooManyRequestsException;
 use Filament\Actions\Action;
 use Filament\Auth\Events\Registered;
 use Filament\Auth\Http\Responses\Contracts\LoginResponse;
@@ -18,6 +22,7 @@ use Filament\Auth\Notifications\VerifyEmail;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\ViewField;
 use Filament\Schemas\Components\Html;
 use Filament\Schemas\Components\RenderHook;
 use Filament\Schemas\Schema;
@@ -42,7 +47,7 @@ use Spatie\Honeypot\Http\Livewire\Concerns\UsesSpamProtection;
 
 final class Login extends \Filament\Auth\Pages\Login
 {
-    use DetectsTeamInvitation;
+    use DetectsWorkspaceInvitation;
     use UsesSpamProtection;
 
     #[Locked]
@@ -115,13 +120,57 @@ final class Login extends \Filament\Auth\Pages\Login
             return $this->handleSignup();
         }
 
+        if ($this->authMethod === 'password') {
+            return $this->handlePasswordAuthentication();
+        }
+
         if ($this->authMethod === null) {
             $this->discover();
 
             return null;
         }
 
-        return parent::authenticate();
+        return null;
+    }
+
+    private function handlePasswordAuthentication(): ?LoginResponse
+    {
+        $submittedEmail = EmailAddress::canonicalize((string) ($this->data['email'] ?? ''));
+
+        if ($submittedEmail !== $this->discoveredEmail) {
+            $this->authMethod = null;
+            $this->passkeyUserHasPassword = false;
+            $this->discoveredEmail = null;
+            $this->discover();
+
+            return null;
+        }
+
+        try {
+            $this->rateLimit(5);
+        } catch (TooManyRequestsException $exception) {
+            $this->getRateLimitedNotification($exception)?->send();
+
+            return null;
+        }
+
+        $data = $this->form->getState();
+
+        try {
+            $next = resolve(AuthenticatePassword::class)->execute(
+                (string) $data['email'],
+                (string) $data['password'],
+                (bool) ($data['remember'] ?? false),
+            );
+        } catch (ValidationException $exception) {
+            throw ValidationException::withMessages([
+                'data.email' => $exception->errors()['email'] ?? [__('auth.failed')],
+            ]);
+        }
+
+        session()->put('url.intended', $next);
+
+        return resolve(LoginResponse::class);
     }
 
     public function usePassword(): void
@@ -144,21 +193,29 @@ final class Login extends \Filament\Auth\Pages\Login
 
         $this->protectAgainstSpam();
 
-        $data = $this->form->getState();
+        try {
+            $data = $this->form->getState();
+        } catch (ValidationException $exception) {
+            $this->resetTurnstileChallenge();
+
+            throw $exception;
+        }
 
         $email = EmailAddress::canonicalize((string) $data['email']);
 
         try {
             $user = resolve(CreateNewUser::class)->execute($email, (string) $data['password']);
         } catch (UniqueConstraintViolationException) {
+            $this->resetTurnstileChallenge();
+
             throw ValidationException::withMessages([
                 'data.email' => __('validation.unique', ['attribute' => __('filament-panels::auth/pages/login.form.email.label')]),
             ]);
         }
 
-        $invitation = $this->getTeamInvitationFromSession();
+        $invitation = $this->getWorkspaceInvitationFromSession();
 
-        if ($invitation && ! $invitation->isExpired() && $invitation->email === $email && $user->markEmailAsVerified()) {
+        if ($invitation instanceof WorkspaceInvitation && ! $invitation->isExpired() && $invitation->email === $email && $user->markEmailAsVerified()) {
             event(new Verified($user));
         }
 
@@ -348,7 +405,7 @@ final class Login extends \Filament\Auth\Pages\Login
             ->autocomplete('username webauthn')
             ->autofocus()
             ->dehydrateStateUsing(fn (?string $state): string => EmailAddress::canonicalize((string) $state))
-            ->default(fn (): ?string => $this->getTeamInvitationFromSession()?->email)
+            ->default(fn (): ?string => $this->getWorkspaceInvitationFromSession()?->email)
             ->rules(RegistrableEmail::rules(), condition: fn (): bool => $this->authMethod === 'signup')
             ->unique(table: fn (): ?string => $this->authMethod === 'signup' ? 'users' : null)
             ->live(onBlur: true)
@@ -372,6 +429,9 @@ final class Login extends \Filament\Auth\Pages\Login
             ->password()
             ->revealable(filament()->arePasswordsRevealable())
             ->autocomplete(fn (): string => $this->authMethod === 'signup' ? 'new-password' : 'current-password')
+            // The document spends its one autofocus on the email field, so the
+            // password field that replaces it has to take focus explicitly.
+            ->extraInputAttributes(['x-init' => '$el.focus()'])
             ->required()
             ->rule(Password::default(), condition: fn (): bool => $this->authMethod === 'signup')
             ->showAllValidationMessages()
@@ -383,5 +443,51 @@ final class Login extends \Filament\Auth\Pages\Login
     {
         return Hidden::make('remember')
             ->default(true);
+    }
+
+    public function form(Schema $schema): Schema
+    {
+        $schema = parent::form($schema);
+
+        return $schema->components([
+            ...$schema->getComponents(withHidden: true),
+            Hidden::make('cf_turnstile_expanded')
+                ->default(false)
+                ->dehydrated(false),
+            $this->getTurnstileFormComponent(),
+        ]);
+    }
+
+    protected function getTurnstileFormComponent(): ViewField
+    {
+        return ViewField::make('cf_turnstile_response')
+            ->hiddenLabel()
+            ->view('filament.forms.components.turnstile')
+            ->viewData(fn (ViewField $component): array => [
+                'expandedStatePath' => $component->getContainer()->getStatePath().'.cf_turnstile_expanded',
+            ])
+            ->visibleJs('$get(\'cf_turnstile_expanded\') === true')
+            ->dehydrated(false)
+            ->rules(TurnstileChallenge::rules(), condition: fn (): bool => $this->authMethod === 'signup')
+            ->validationMessages(['required' => __('auth.turnstile.required')])
+            ->visible(fn (): bool => $this->authMethod === 'signup' && TurnstileChallenge::isEnabled());
+    }
+
+    /**
+     * Turnstile tokens are single use and every field validates on every
+     * submit, so a token is already spent when any other field fails.
+     */
+    private function resetTurnstileChallenge(): void
+    {
+        if (! is_array($this->data)) {
+            return;
+        }
+
+        if (! array_key_exists('cf_turnstile_response', $this->data)) {
+            return;
+        }
+
+        $this->data['cf_turnstile_response'] = null;
+        $this->data['cf_turnstile_expanded'] = true;
     }
 }

@@ -1,6 +1,6 @@
 ---
 title: Contributing Guide
-description: Installation, architecture, and contributing.
+description: Get Relaticle development setup steps and a guide to its PHP 8.5, Laravel 13 and Filament 5 codebase.
 order: 3
 updated: "2026-08-13"
 ---
@@ -42,22 +42,22 @@ Visit `http://localhost:8000` to access the application.
 ### Core Models
 
 ```
-Team ─┬─ User (via Membership)
-      ├─ Company ─┬─ People
-      │           └─ Opportunity ─── People
-      ├─ Task (many-to-many with Company, People, Opportunity)
-      └─ Note (many-to-many with Company, People, Opportunity)
+Workspace ─┬─ User (via Membership)
+           ├─ Company ─┬─ People
+           │           └─ Opportunity ─── People
+           ├─ Task (many-to-many with Company, People, Opportunity)
+           └─ Note (many-to-many with Company, People, Opportunity)
 ```
 
 ### Multi-Tenancy
 
-All workspace data is isolated via the `HasTeam` trait. Every query automatically scopes to the current team.
+All workspace data is isolated via the `HasWorkspace` trait. Every query automatically scopes to the current workspace.
 
 ### Key Traits
 
 | Trait | Purpose |
 |-------|---------|
-| `HasTeam` | Workspace isolation |
+| `HasWorkspace` | Workspace isolation |
 | `HasCreator` | Tracks record creator |
 | `HasNotes` | Polymorphic notes relationship |
 

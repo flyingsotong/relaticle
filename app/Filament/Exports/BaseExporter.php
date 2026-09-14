@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace App\Filament\Exports;
 
 use App\Models\CustomField;
-use App\Models\Team;
 use App\Models\User;
-use Carbon\Carbon;
+use App\Models\Workspace;
+use Carbon\CarbonInterface;
 use Filament\Actions\Exports\ExportColumn;
 use Filament\Actions\Exports\Exporter;
 use Filament\Actions\Exports\Models\Export;
@@ -31,11 +31,11 @@ abstract class BaseExporter extends Exporter
     ) {
         parent::__construct($export, $columnMap, $options);
 
-        // Set the team_id on the export record
-        if (Auth::guard('web')->check() && Auth::guard('web')->user()->currentTeam) {
-            /** @var Team $currentTeam */
-            $currentTeam = Auth::guard('web')->user()->currentTeam;
-            $export->team_id = $currentTeam->getKey();
+        // Set the workspace_id on the export record
+        if (Auth::guard('web')->check() && Auth::guard('web')->user()->currentWorkspace) {
+            /** @var Workspace $currentWorkspace */
+            $currentWorkspace = Auth::guard('web')->user()->currentWorkspace;
+            $export->workspace_id = $currentWorkspace->getKey();
         }
     }
 
@@ -84,7 +84,7 @@ abstract class BaseExporter extends Exporter
     {
         return ExportColumn::make($name)
             ->label($label.' ('.self::requestTimezone().')')
-            ->formatStateUsing(fn (?Carbon $state, BaseExporter $exporter): ?string => $state?->setTimezone($exporter->timezone())->format('Y-m-d H:i:s'));
+            ->formatStateUsing(fn (?CarbonInterface $state, BaseExporter $exporter): ?string => $state?->setTimezone($exporter->timezone())->format('Y-m-d H:i:s'));
     }
 
     /**
@@ -122,13 +122,13 @@ abstract class BaseExporter extends Exporter
                 if ($field->typeData->dataType === FieldDataType::DATE_TIME) {
                     return $column
                         ->label($column->getLabel().' ('.self::requestTimezone().')')
-                        ->formatStateUsing(fn (mixed $state, BaseExporter $exporter): mixed => $state instanceof Carbon
+                        ->formatStateUsing(fn (mixed $state, BaseExporter $exporter): mixed => $state instanceof CarbonInterface
                             ? $state->copy()->setTimezone($exporter->timezone())->format('Y-m-d H:i:s')
                             : $state);
                 }
 
                 if ($field->typeData->dataType === FieldDataType::DATE) {
-                    return $column->formatStateUsing(fn (mixed $state): mixed => $state instanceof Carbon
+                    return $column->formatStateUsing(fn (mixed $state): mixed => $state instanceof CarbonInterface
                         ? $state->format('Y-m-d')
                         : $state);
                 }
@@ -139,18 +139,18 @@ abstract class BaseExporter extends Exporter
     }
 
     /**
-     * Make exports tenant-aware by scoping to the current team
+     * Make exports tenant-aware by scoping to the current workspace
      *
      * @param  Builder<Model>  $query
      * @return Builder<Model>
      */
     public static function modifyQuery(Builder $query): Builder
     {
-        if (Auth::guard('web')->check() && Auth::guard('web')->user()->currentTeam) {
-            /** @var Team $currentTeam */
-            $currentTeam = Auth::guard('web')->user()->currentTeam;
+        if (Auth::guard('web')->check() && Auth::guard('web')->user()->currentWorkspace) {
+            /** @var Workspace $currentWorkspace */
+            $currentWorkspace = Auth::guard('web')->user()->currentWorkspace;
 
-            return $query->where('team_id', $currentTeam->getKey());
+            return $query->where('workspace_id', $currentWorkspace->getKey());
         }
 
         return $query;

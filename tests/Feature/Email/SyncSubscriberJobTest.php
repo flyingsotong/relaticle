@@ -12,6 +12,7 @@ use App\Support\Email\SubscriberProfile;
 use App\Support\Email\SubscriberProfileDeriver;
 use Illuminate\Contracts\Queue\Job as QueueJob;
 use Illuminate\Support\Facades\Queue;
+use Spatie\MailcoachSdk\Exceptions\InvalidData;
 use Spatie\MailcoachSdk\Exceptions\RateLimited;
 use Spatie\MailcoachSdk\Exceptions\ResourceNotFound;
 use Spatie\MailcoachSdk\Facades\Mailcoach;
@@ -35,7 +36,7 @@ function syncSubscriberProfile(User $user): void
 }
 
 test('creates a subscriber with the derived profile and stores uuid and hash', function (): void {
-    $user = User::factory()->withTeam()->create(['name' => 'Ada Lovelace', 'email_verified_at' => now()]);
+    $user = User::factory()->withWorkspace()->create(['name' => 'Ada Lovelace', 'email_verified_at' => now()]);
 
     Mailcoach::shouldReceive('findByEmail')
         ->once()
@@ -60,7 +61,7 @@ test('creates a subscriber with the derived profile and stores uuid and hash', f
 });
 
 test('resolves by stored uuid and carries an email change onto the same subscriber', function (): void {
-    $user = User::factory()->withTeam()->create([
+    $user = User::factory()->withWorkspace()->create([
         'email_verified_at' => now(),
         'mailcoach_subscriber_uuid' => 'mc-uuid-1',
     ]);
@@ -81,7 +82,7 @@ test('resolves by stored uuid and carries an email change onto the same subscrib
 });
 
 test('falls back to email lookup and adopts the found uuid when the stored uuid is gone', function (): void {
-    $user = User::factory()->withTeam()->create([
+    $user = User::factory()->withWorkspace()->create([
         'email_verified_at' => now(),
         'mailcoach_subscriber_uuid' => 'gone-uuid',
     ]);
@@ -107,7 +108,7 @@ test('falls back to email lookup and adopts the found uuid when the stored uuid 
 });
 
 test('creates a new subscriber when the email lookup returns a different address', function (): void {
-    $user = User::factory()->withTeam()->create(['email_verified_at' => now()]);
+    $user = User::factory()->withWorkspace()->create(['email_verified_at' => now()]);
 
     Mailcoach::shouldReceive('findByEmail')
         ->once()
@@ -125,7 +126,7 @@ test('creates a new subscriber when the email lookup returns a different address
 });
 
 test('preserves foreign tags and removes stale owned tags on update', function (): void {
-    $user = User::factory()->withTeam()->create([
+    $user = User::factory()->withWorkspace()->create([
         'email_verified_at' => now(),
         'mailcoach_subscriber_uuid' => 'mc-uuid-1',
         'last_login_at' => now()->subDays(3),
@@ -151,18 +152,18 @@ test('preserves foreign tags and removes stale owned tags on update', function (
     syncSubscriberProfile($user);
 });
 
-test('unions onboarding tags across all owned teams', function (): void {
-    $user = User::factory()->withTeam(function ($team): void {
-        $team->update([
+test('unions onboarding tags across all owned workspaces', function (): void {
+    $user = User::factory()->withWorkspace(function ($workspace): void {
+        $workspace->update([
             'onboarding_use_case' => OnboardingUseCase::Sales,
             'onboarding_referral_source' => OnboardingReferralSource::Google,
         ]);
     })->create(['email_verified_at' => now()]);
 
-    $user->ownedTeams()->create([
-        'name' => 'Second Team',
-        'slug' => 'second-team-'.$user->id,
-        'personal_team' => false,
+    $user->ownedWorkspaces()->create([
+        'name' => 'Second Workspace',
+        'slug' => 'second-workspace-'.$user->id,
+        'personal_workspace' => false,
         'onboarding_use_case' => OnboardingUseCase::Recruiting,
         'onboarding_referral_source' => OnboardingReferralSource::LinkedIn,
     ]);
@@ -180,7 +181,7 @@ test('unions onboarding tags across all owned teams', function (): void {
 });
 
 test('tags social login users with signup-source:social', function (): void {
-    $user = User::factory()->withTeam()->create(['email_verified_at' => now()]);
+    $user = User::factory()->withWorkspace()->create(['email_verified_at' => now()]);
     UserSocialAccount::factory()->create(['user_id' => $user->id, 'provider_name' => 'google']);
 
     Mailcoach::shouldReceive('findByEmail')->once()->andReturnNull();
@@ -194,7 +195,7 @@ test('tags social login users with signup-source:social', function (): void {
 });
 
 test('a social account linked after registration keeps signup-source:organic', function (): void {
-    $user = User::factory()->withTeam()->create(['email_verified_at' => now()]);
+    $user = User::factory()->withWorkspace()->create(['email_verified_at' => now()]);
     UserSocialAccount::factory()->create([
         'user_id' => $user->id,
         'provider_name' => 'google',
@@ -211,11 +212,11 @@ test('a social account linked after registration keeps signup-source:organic', f
     syncSubscriberProfile($user);
 });
 
-test('derives has-crm-data from records in any of the user teams', function (): void {
-    $user = User::factory()->withTeam()->create(['email_verified_at' => now()]);
+test('derives has-crm-data from records in any of the user workspaces', function (): void {
+    $user = User::factory()->withWorkspace()->create(['email_verified_at' => now()]);
 
     Company::factory()->create([
-        'team_id' => $user->currentTeam->id,
+        'workspace_id' => $user->currentWorkspace->id,
         'account_owner_id' => $user->id,
     ]);
 
@@ -228,23 +229,23 @@ test('derives has-crm-data from records in any of the user teams', function (): 
     syncSubscriberProfile($user);
 });
 
-test('derives has-api-token and has-team-members from the database', function (): void {
-    $user = User::factory()->withTeam()->create(['email_verified_at' => now()]);
+test('derives has-api-token and has-workspace-members from the database', function (): void {
+    $user = User::factory()->withWorkspace()->create(['email_verified_at' => now()]);
     $user->createToken('test-token', ['*']);
-    $user->currentTeam->users()->attach(User::factory()->create(), ['role' => 'admin']);
+    $user->currentWorkspace->users()->attach(User::factory()->create(), ['role' => 'admin']);
 
     Mailcoach::shouldReceive('findByEmail')->once()->andReturnNull();
     Mailcoach::shouldReceive('createSubscriber')
         ->once()
         ->with('test-list-id', Mockery::on(fn (array $data): bool => in_array('has-api-token', $data['tags'], true)
-            && in_array('has-team-members', $data['tags'], true)))
+            && in_array('has-workspace-members', $data['tags'], true)))
         ->andReturn(new Subscriber(['uuid' => 'new-uuid', 'email' => $user->email, 'tags' => []]));
 
     syncSubscriberProfile($user);
 });
 
 test('derives the recency bucket from last_login_at', function (?int $daysAgo, ?string $expectedTag): void {
-    $user = User::factory()->withTeam()->create([
+    $user = User::factory()->withWorkspace()->create([
         'email_verified_at' => now(),
         'last_login_at' => $daysAgo === null ? null : now()->subDays($daysAgo),
     ]);
@@ -271,7 +272,7 @@ test('derives the recency bucket from last_login_at', function (?int $daysAgo, ?
 ]);
 
 test('skips the API entirely when the stored profile hash is current', function (): void {
-    $user = User::factory()->withTeam()->create(['email_verified_at' => now()]);
+    $user = User::factory()->withWorkspace()->create(['email_verified_at' => now()]);
 
     Mailcoach::shouldReceive('findByEmail')->once()->andReturnNull();
     Mailcoach::shouldReceive('createSubscriber')
@@ -283,7 +284,7 @@ test('skips the API entirely when the stored profile hash is current', function 
 });
 
 test('syncs when the hash is current but no uuid is stored', function (): void {
-    $user = User::factory()->withTeam()->create(['email_verified_at' => now()]);
+    $user = User::factory()->withWorkspace()->create(['email_verified_at' => now()]);
     $profile = (new SubscriberProfileDeriver)->derive($user);
     $user->forceFill(['subscriber_profile_hash' => $profile->hash()])->save();
 
@@ -300,7 +301,7 @@ test('syncs when the hash is current but no uuid is stored', function (): void {
 test('makes no API calls when sync is disabled', function (): void {
     config(['mailcoach-sdk.enabled_subscribers_sync' => false]);
 
-    $user = User::factory()->withTeam()->create(['email_verified_at' => now()]);
+    $user = User::factory()->withWorkspace()->create(['email_verified_at' => now()]);
 
     Mailcoach::shouldReceive('findByEmail')->never();
     Mailcoach::shouldReceive('createSubscriber')->never();
@@ -311,7 +312,7 @@ test('makes no API calls when sync is disabled', function (): void {
 });
 
 test('makes no API calls for an unverified user', function (): void {
-    $user = User::factory()->withTeam()->create(['email_verified_at' => null]);
+    $user = User::factory()->withWorkspace()->create(['email_verified_at' => null]);
 
     Mailcoach::shouldReceive('findByEmail')->never();
     Mailcoach::shouldReceive('createSubscriber')->never();
@@ -326,7 +327,7 @@ test('makes no API calls for a deleted user', function (): void {
 });
 
 test('releases with the retry-after delay when rate limited', function (): void {
-    $user = User::factory()->withTeam()->create(['email_verified_at' => now()]);
+    $user = User::factory()->withWorkspace()->create(['email_verified_at' => now()]);
 
     Mailcoach::shouldReceive('findByEmail')
         ->once()
@@ -340,4 +341,95 @@ test('releases with the retry-after delay when rate limited', function (): void 
     $job->handle(new SubscriberProfileDeriver);
 
     expect($user->refresh()->subscriber_profile_hash)->toBeNull();
+});
+
+function mailcoachRejectsTheEmail(): InvalidData
+{
+    return new InvalidData([
+        'message' => 'The email field must be a valid email address.',
+        'errors' => ['email' => ['The email field must be a valid email address.']],
+    ]);
+}
+
+function syncExpectingPermanentFailure(User $user, InvalidData $exception): void
+{
+    $queueJob = Mockery::mock(QueueJob::class);
+    $queueJob->shouldReceive('fail')->once()->with($exception);
+    $queueJob->shouldReceive('release')->never();
+
+    $job = new SyncSubscriberJob((string) $user->id);
+    $job->setJob($queueJob);
+    $job->handle(new SubscriberProfileDeriver);
+}
+
+test('fails without retrying and records the rejected profile when Mailcoach rejects an update', function (): void {
+    $user = User::factory()->withWorkspace()->create([
+        'email_verified_at' => now(),
+        'mailcoach_subscriber_uuid' => 'mc-uuid-dead-domain',
+        'subscriber_profile_hash' => 'hash-mailcoach-still-holds',
+    ]);
+    $exception = mailcoachRejectsTheEmail();
+
+    Mailcoach::shouldReceive('subscriber')
+        ->once()
+        ->with('mc-uuid-dead-domain')
+        ->andReturn(new Subscriber(['uuid' => 'mc-uuid-dead-domain', 'email' => $user->email, 'tags' => []]));
+    Mailcoach::shouldReceive('updateSubscriber')->once()->andThrow($exception);
+
+    syncExpectingPermanentFailure($user, $exception);
+
+    $profile = (new SubscriberProfileDeriver)->derive($user->refresh());
+
+    expect($user)
+        ->mailcoach_subscriber_uuid->toBe('mc-uuid-dead-domain')
+        ->subscriber_profile_hash->toBe('hash-mailcoach-still-holds')
+        ->rejected_subscriber_profile_hash->toBe($profile->hash());
+});
+
+test('fails without retrying and records the rejected profile when Mailcoach rejects a create', function (): void {
+    $user = User::factory()->withWorkspace()->create(['email_verified_at' => now()]);
+    $exception = mailcoachRejectsTheEmail();
+
+    Mailcoach::shouldReceive('findByEmail')->once()->andReturnNull();
+    Mailcoach::shouldReceive('createSubscriber')->once()->andThrow($exception);
+
+    syncExpectingPermanentFailure($user, $exception);
+
+    $profile = (new SubscriberProfileDeriver)->derive($user->refresh());
+
+    expect($user)
+        ->mailcoach_subscriber_uuid->toBeNull()
+        ->subscriber_profile_hash->toBeNull()
+        ->rejected_subscriber_profile_hash->toBe($profile->hash());
+});
+
+test('does not re-offer a rejected profile until it changes', function (): void {
+    $user = User::factory()->withWorkspace()->create(['email_verified_at' => now()]);
+    $user->forceFill(['rejected_subscriber_profile_hash' => (new SubscriberProfileDeriver)->derive($user)->hash()])->save();
+
+    Mailcoach::shouldReceive('findByEmail')->never();
+    Mailcoach::shouldReceive('createSubscriber')->never();
+
+    syncSubscriberProfile($user);
+
+    expect($user->refresh()->mailcoach_subscriber_uuid)->toBeNull();
+});
+
+test('a rejected profile is offered again once it changes, and success clears the rejection', function (): void {
+    $user = User::factory()->withWorkspace()->create(['email_verified_at' => now()]);
+    $user->forceFill(['rejected_subscriber_profile_hash' => (new SubscriberProfileDeriver)->derive($user)->hash()])->save();
+
+    $user->forceFill(['email' => 'renamed@example.com'])->save();
+
+    Mailcoach::shouldReceive('findByEmail')->once()->with('test-list-id', 'renamed@example.com')->andReturnNull();
+    Mailcoach::shouldReceive('createSubscriber')
+        ->once()
+        ->andReturn(new Subscriber(['uuid' => 'new-uuid', 'email' => 'renamed@example.com', 'tags' => []]));
+
+    syncSubscriberProfile($user);
+
+    expect($user->refresh())
+        ->mailcoach_subscriber_uuid->toBe('new-uuid')
+        ->subscriber_profile_hash->not->toBeNull()
+        ->rejected_subscriber_profile_hash->toBeNull();
 });

@@ -5,6 +5,12 @@ declare(strict_types=1);
 use App\Filament\Clusters\Settings;
 use App\Filament\Pages\EditProfile;
 use App\Filament\Pages\NotificationPreferences;
+use App\Filament\Pages\Security;
+use App\Livewire\App\Profile\LogoutOtherBrowserSessions;
+use App\Livewire\App\Profile\ManageMfa;
+use App\Livewire\App\Profile\ManagePasskeys;
+use App\Livewire\App\Profile\UpdatePassword;
+use App\Livewire\App\Profile\UpdateProfileInformation;
 use App\Models\User;
 use App\Providers\Filament\AppPanelProvider;
 use App\Providers\MacroServiceProvider;
@@ -15,7 +21,7 @@ use Illuminate\Foundation\Testing\CachedState;
 use Illuminate\Support\Facades\Route;
 use Relaticle\Chat\ChatServiceProvider;
 
-mutates(MacroServiceProvider::class, AppPanelProvider::class, ChatServiceProvider::class);
+mutates(EditProfile::class, Security::class, MacroServiceProvider::class, AppPanelProvider::class, ChatServiceProvider::class);
 
 describe('app panel configuration - path mode (default)', function () {
     it('registers panel with path prefix and no domain constraint', function () {
@@ -35,7 +41,7 @@ describe('app panel configuration - path mode (default)', function () {
         $components = Filament::getPanel('app')->getClusteredComponents(Settings::class);
 
         expect($components)
-            ->toContain(EditProfile::class, NotificationPreferences::class)
+            ->toContain(EditProfile::class, Security::class, NotificationPreferences::class)
             ->and(array_count_values($components))->each->toBe(1);
     });
 });
@@ -73,7 +79,7 @@ describe('getAppUrl macro - path mode', function () {
     });
 
     it('handles nested path segments', function () {
-        expect(url()->getAppUrl('teams/1/companies'))->toBe('https://example.com/app/teams/1/companies');
+        expect(url()->getAppUrl('workspaces/1/companies'))->toBe('https://example.com/app/workspaces/1/companies');
     });
 
     it('handles path with leading slash', function () {
@@ -116,7 +122,7 @@ describe('getAppUrl macro - domain mode', function () {
     });
 
     it('handles nested path segments', function () {
-        expect(url()->getAppUrl('teams/1/companies'))->toBe('https://app.example.com/teams/1/companies');
+        expect(url()->getAppUrl('workspaces/1/companies'))->toBe('https://app.example.com/workspaces/1/companies');
     });
 
     it('handles path with leading slash', function () {
@@ -237,7 +243,7 @@ it('gives every chat route throttle its own bucket so limiters cannot starve eac
 });
 
 it('does not let one chat route consume another route\'s rate limit allowance', function (): void {
-    $user = User::factory()->withPersonalTeam()->create();
+    $user = User::factory()->withPersonalWorkspace()->create();
     $this->actingAs($user);
 
     // Exhaust the mentions bucket (60/min).
@@ -253,4 +259,21 @@ it('does not let one chat route consume another route\'s rate limit allowance', 
     $conversations = $this->get(route('chat.conversations'));
 
     expect($conversations->status())->not->toBe(429);
+});
+
+test('profile and security have separate settings', function (): void {
+    $user = User::factory()->withWorkspace()->create();
+    $this->actingAs($user);
+    Filament::setTenant($user->currentWorkspace);
+
+    livewire(EditProfile::class)
+        ->assertSeeLivewire(UpdateProfileInformation::class)
+        ->assertDontSeeLivewire(ManageMfa::class);
+
+    livewire(Security::class)
+        ->assertSeeLivewire(UpdatePassword::class)
+        ->assertSeeLivewire(ManagePasskeys::class)
+        ->assertSeeLivewire(ManageMfa::class)
+        ->assertSeeLivewire(LogoutOtherBrowserSessions::class)
+        ->assertDontSeeLivewire(UpdateProfileInformation::class);
 });
